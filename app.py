@@ -1,122 +1,149 @@
 import streamlit as st
 import pandas as pd
-import pickle
-import os
-import matplotlib.pyplot as plt
+import numpy as np
+import plotly.express as px
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from xgboost import XGBClassifier
+from imblearn.over_sampling import SMOTE
+from sklearn.metrics import accuracy_score, recall_score, f1_score
 
-st.set_page_config(page_title="Churn Prediction", layout="centered")
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Churn Intelligence Dashboard", layout="wide")
 
-st.title(" Customer Churn Prediction Dashboard")
+st.title("📊 Customer Churn Intelligence Dashboard")
 
-# Load model
-if not os.path.exists("model.pkl"):
-    st.error(" Model file not found!")
-    st.stop()
+# ---------------- LOAD DATA ----------------
+df = pd.read_csv("WA_Fn-UseC_-Telco-Customer-Churn.csv")
 
-model = pickle.load(open("model.pkl", "rb"))
+# ---------------- PREPROCESSING ----------------
+df.drop("customerID", axis=1, inplace=True)
 
-st.subheader("Enter Customer Details")
+# Convert TotalCharges to numeric
+df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
+df.dropna(inplace=True)
 
-# Layout
-col1, col2 = st.columns(2)
+# Encode categorical columns
+le = LabelEncoder()
+for col in df.select_dtypes(include="object").columns:
+    df[col] = le.fit_transform(df[col])
 
-with col1:
-    gender = st.selectbox("Gender", ["Female", "Male"])
-    SeniorCitizen = st.selectbox("Senior Citizen", [0, 1])
-    Partner = st.selectbox("Partner", ["Yes", "No"])
-    Dependents = st.selectbox("Dependents", ["Yes", "No"])
-    tenure = st.slider("Tenure", 0, 72)
-    PhoneService = st.selectbox("Phone Service", ["Yes", "No"])
-    MultipleLines = st.selectbox("Multiple Lines", ["No", "Yes", "No phone service"])
-    InternetService = st.selectbox("Internet Service", ["DSL", "Fiber optic", "No"])
+# ---------------- FEATURES ----------------
+X = df.drop("Churn", axis=1)
+y = df["Churn"]
 
-with col2:
-    OnlineSecurity = st.selectbox("Online Security", ["No", "Yes", "No internet service"])
-    OnlineBackup = st.selectbox("Online Backup", ["No", "Yes", "No internet service"])
-    DeviceProtection = st.selectbox("Device Protection", ["No", "Yes", "No internet service"])
-    TechSupport = st.selectbox("Tech Support", ["No", "Yes", "No internet service"])
-    StreamingTV = st.selectbox("Streaming TV", ["No", "Yes", "No internet service"])
-    StreamingMovies = st.selectbox("Streaming Movies", ["No", "Yes", "No internet service"])
-    Contract = st.selectbox("Contract", ["Month-to-month", "One year", "Two year"])
-    PaperlessBilling = st.selectbox("Paperless Billing", ["Yes", "No"])
-    PaymentMethod = st.selectbox("Payment Method", [
-        "Electronic check", "Mailed check",
-        "Bank transfer (automatic)", "Credit card (automatic)"
-    ])
-    MonthlyCharges = st.number_input("Monthly Charges", min_value=0.0)
-    TotalCharges = st.number_input("Total Charges", min_value=0.0)
+# Train Test Split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
 
-if st.button("Predict"):
+# ---------------- SMOTE ----------------
+smote = SMOTE(random_state=42)
+X_train, y_train = smote.fit_resample(X_train, y_train)
 
-    # Manual Encoding (FULL 19 FEATURES)
-    data = {
-        "gender": 1 if gender == "Male" else 0,
-        "SeniorCitizen": SeniorCitizen,
-        "Partner": 1 if Partner == "Yes" else 0,
-        "Dependents": 1 if Dependents == "Yes" else 0,
-        "tenure": tenure,
-        "PhoneService": 1 if PhoneService == "Yes" else 0,
+# ---------------- MODEL ----------------
+model = XGBClassifier(
+    n_estimators=300,
+    max_depth=5,
+    learning_rate=0.05,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=42
+)
 
-        "MultipleLines": 0 if MultipleLines == "No" else (1 if MultipleLines == "Yes" else 2),
+model.fit(X_train, y_train)
 
-        "InternetService": 0 if InternetService == "DSL" else (1 if InternetService == "Fiber optic" else 2),
+# ---------------- PREDICTION ----------------
+y_prob = model.predict_proba(X_test)[:, 1]
+y_pred = (y_prob > 0.4).astype(int)
 
-        "OnlineSecurity": 0 if OnlineSecurity == "No" else (1 if OnlineSecurity == "Yes" else 2),
-        "OnlineBackup": 0 if OnlineBackup == "No" else (1 if OnlineBackup == "Yes" else 2),
-        "DeviceProtection": 0 if DeviceProtection == "No" else (1 if DeviceProtection == "Yes" else 2),
-        "TechSupport": 0 if TechSupport == "No" else (1 if TechSupport == "Yes" else 2),
+# ---------------- METRICS ----------------
+accuracy = accuracy_score(y_test, y_pred)
+recall = recall_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred)
 
-        "StreamingTV": 0 if StreamingTV == "No" else (1 if StreamingTV == "Yes" else 2),
-        "StreamingMovies": 0 if StreamingMovies == "No" else (1 if StreamingMovies == "Yes" else 2),
+# ---------------- TABS ----------------
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔮 Prediction", "📌 Insights"])
 
-        "Contract": 0 if Contract == "Month-to-month" else (1 if Contract == "One year" else 2),
+# ================= DASHBOARD =================
+with tab1:
 
-        "PaperlessBilling": 1 if PaperlessBilling == "Yes" else 0,
+    st.subheader("📈 Model Performance")
 
-        "PaymentMethod": {
-            "Electronic check": 0,
-            "Mailed check": 1,
-            "Bank transfer (automatic)": 2,
-            "Credit card (automatic)": 3
-        }[PaymentMethod],
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Accuracy", f"{accuracy*100:.2f}%")
+    col2.metric("Recall", f"{recall*100:.2f}%")
+    col3.metric("F1 Score", f"{f1*100:.2f}%")
 
-        "MonthlyCharges": MonthlyCharges,
-        "TotalCharges": TotalCharges
-    }
+    # ---------------- CHURN DISTRIBUTION ----------------
+    st.subheader("📊 Churn Distribution")
+    fig1 = px.pie(df, names="Churn")
+    st.plotly_chart(fig1, use_container_width=True)
 
-    input_df = pd.DataFrame([data])
+    # ---------------- FEATURE IMPORTANCE ----------------
+    st.subheader("🔍 Feature Importance")
 
-    try:
-        prediction = model.predict(input_df)
+    feat_df = pd.DataFrame({
+        "Feature": X.columns,
+        "Importance": model.feature_importances_
+    }).sort_values(by="Importance", ascending=False)
 
-        if hasattr(model, "predict_proba"):
-            prob = model.predict_proba(input_df)[0]
+    fig2 = px.bar(feat_df, x="Importance", y="Feature", orientation="h")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    # ---------------- TENURE VS CHURN ----------------
+    st.subheader("📉 Tenure vs Churn")
+
+    fig3 = px.box(df, x="Churn", y="tenure")
+    st.plotly_chart(fig3, use_container_width=True)
+
+    # ---------------- MONTHLY CHARGES ----------------
+    st.subheader("💰 Monthly Charges vs Churn")
+
+    fig4 = px.box(df, x="Churn", y="MonthlyCharges")
+    st.plotly_chart(fig4, use_container_width=True)
+
+# ================= PREDICTION =================
+with tab2:
+
+    st.subheader("🔮 Predict Customer Churn")
+
+    col1, col2 = st.columns(2)
+
+    tenure = col1.slider("Tenure (months)", 0, 72)
+    monthly = col2.slider("Monthly Charges", 0, 150)
+
+    contract = st.selectbox("Contract Type", [0, 1, 2])
+    internet = st.selectbox("Internet Service", [0, 1, 2])
+
+    input_data = np.array([[tenure, monthly, contract, internet] + [0]*(X.shape[1]-4)])
+
+    if st.button("Predict"):
+
+        prediction = model.predict(input_data)[0]
+
+        if prediction == 1:
+            st.error("⚠️ High Risk of Churn")
         else:
-            prob = [1 - prediction[0], prediction[0]]
+            st.success("✅ Customer is Safe")
 
-        st.subheader(" Prediction Result")
+# ================= INSIGHTS =================
+with tab3:
 
-        if prediction[0] == 1:
-            st.error(" Customer will churn")
-        else:
-            st.success(" Customer will not churn")
+    st.subheader("📌 Business Insights")
 
-        #  Probability Graph
-        st.subheader(" Churn Probability")
+    st.info("""
+    - Customers with high monthly charges are more likely to churn
+    - Low tenure customers show highest churn probability
+    - Contract type plays a major role in retention
+    - Electronic payment users tend to churn more
+    """)
 
-        fig, ax = plt.subplots()
-        labels = ["No Churn", "Churn"]
-        values = prob
+    st.subheader("🎯 Recommendations")
 
-        ax.bar(labels, values)
-        ax.set_ylim(0, 1)
-        ax.set_ylabel("Probability")
-
-        st.pyplot(fig)
-
-        # Customer Profile
-        st.subheader(" Customer Profile")
-        st.bar_chart(input_df.T)
-
-    except Exception as e:
-        st.error(f"Error: {e}")
+    st.success("""
+    - Offer discounts to high-risk customers
+    - Improve onboarding experience for new users
+    - Promote long-term contracts
+    - Target customers with personalized offers
+    """)
